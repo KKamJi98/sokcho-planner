@@ -1,0 +1,65 @@
+image:
+  repository: ghcr.io/kkamji98/sokcho-planner
+  # GitHub Actions replaces this immutable tag after it builds a commit.
+  tag: bootstrap
+  pullPolicy: IfNotPresent
+
+replicas: 1
+containerPort: 3000
+
+service:
+  port: 80
+
+persistence:
+  enabled: true
+  accessModes: [ReadWriteOnce]
+  size: 1Gi
+  storageClassName: local-path
+
+appEnv:
+  secretName: sokcho-planner-app-env
+  refreshInterval: 1h
+  secretStoreRef:
+    name: parameter-store
+    kind: ClusterSecretStore
+  passwordSsmKey: /kkamji/personal/sokcho-planner/app/password
+
+route:
+  enabled: true
+  host: sokcho.kkamji.net
+  parentRef:
+    name: kkamji
+    namespace: envoy-gateway-system
+    sectionName: https
+
+resources:
+  requests:
+    cpu: 50m
+    memory: 128Mi
+  limits:
+    cpu: 300m
+    memory: 384Mi
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 1001
+  runAsGroup: 1001
+  fsGroup: 1001
+  seccompProfile:
+    type: RuntimeDefault
+securityContext:
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: false
+  capabilities:
+    drop: [ALL]
+
+startupProbe:
+  httpGet: { path: /api/health, port: http }
+  failureThreshold: 30
+  periodSeconds: 3
+readinessProbe:
+  httpGet: { path: /api/health, port: http }
+  periodSeconds: 5
+livenessProbe:
+  httpGet: { path: /api/health, port: http }
+  periodSeconds: 10

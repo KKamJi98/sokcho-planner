@@ -1,0 +1,52 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "sokcho-planner.fullname" . }}
+  labels:
+    {{- include "sokcho-planner.labels" . | nindent 4 }}
+spec:
+  # SQLite uses a single RWO PVC: never overlap writers during an image rollout.
+  strategy: { type: Recreate }
+  replicas: {{ .Values.replicas }}
+  selector:
+    matchLabels:
+      {{- include "sokcho-planner.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "sokcho-planner.selectorLabels" . | nindent 8 }}
+    spec:
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      containers:
+        - name: app
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          ports:
+            - name: http
+              containerPort: {{ .Values.containerPort }}
+          env:
+            - name: DATABASE_PATH
+              value: /data/sokcho-planner.db
+            - name: PLANNER_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: {{ .Values.appEnv.secretName }}
+                  key: PLANNER_PASSWORD
+          startupProbe:
+            {{- toYaml .Values.startupProbe | nindent 12 }}
+          readinessProbe:
+            {{- toYaml .Values.readinessProbe | nindent 12 }}
+          livenessProbe:
+            {{- toYaml .Values.livenessProbe | nindent 12 }}
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ include "sokcho-planner.fullname" . }}-data

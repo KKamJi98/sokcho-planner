@@ -1,0 +1,8 @@
+title = "sokcho-planner gitleaks configuration"
+
+[allowlist]
+description = "Generated dependency and build artifacts are not source inputs."
+paths = [
+  '''node_modules/''',
+  '''\.next/''',
+]
