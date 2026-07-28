@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
-import { createComment, createPlace, listPlanner, saveEvaluation, updatePlace } from "@/lib/planner";
+import { createComment, createPlace, createScheduleItem, deletePlace, deleteScheduleItem, listPlanner, saveEvaluation, setPlaceRating, updatePlace } from "@/lib/planner";
 
 export const runtime = "nodejs";
 
@@ -28,6 +28,17 @@ export async function POST(request: NextRequest) {
   } else if (body.action === "evaluation") {
     if (typeof body.placeId !== "number") return error("장소를 찾을 수 없습니다.");
     saveEvaluation(body.placeId, body.metrics as Parameters<typeof saveEvaluation>[1]);
+  } else if (body.action === "schedule") {
+    if (typeof body.startAt !== "string" || typeof body.title !== "string" || !body.startAt.trim() || !body.title.trim()) {
+      return error("시작 시각과 일정 제목은 필수입니다.");
+    }
+    createScheduleItem({
+      startAt: body.startAt,
+      endAt: typeof body.endAt === "string" ? body.endAt : "",
+      title: body.title,
+      transport: typeof body.transport === "string" ? body.transport : "",
+      notes: typeof body.notes === "string" ? body.notes : "",
+    });
   } else {
     return error("지원하지 않는 요청입니다.");
   }
@@ -38,6 +49,20 @@ export async function PATCH(request: NextRequest) {
   if (!(await isAuthenticated())) return error("로그인이 필요합니다.", 401);
   const body = await request.json() as Record<string, unknown>;
   if (typeof body.placeId !== "number") return error("장소를 찾을 수 없습니다.");
-  updatePlace(body.placeId, { notes: typeof body.notes === "string" ? body.notes : undefined, planAt: typeof body.planAt === "string" ? body.planAt : undefined });
+  if (body.rating !== undefined) {
+    if (typeof body.rating !== "number" || !setPlaceRating(body.placeId, body.rating)) return error("별점은 0~5 사이 정수여야 합니다.");
+  } else {
+    updatePlace(body.placeId, { notes: typeof body.notes === "string" ? body.notes : undefined, planAt: typeof body.planAt === "string" ? body.planAt : undefined });
+  }
+  return NextResponse.json(listPlanner());
+}
+
+export async function DELETE(request: NextRequest) {
+  if (!(await isAuthenticated())) return error("로그인이 필요합니다.", 401);
+  const body = await request.json() as Record<string, unknown>;
+  const id = typeof body.id === "number" ? body.id : null;
+  if (id == null) return error("삭제할 항목을 찾을 수 없습니다.");
+  const deleted = body.action === "place" ? deletePlace(id) : body.action === "schedule" ? deleteScheduleItem(id) : false;
+  if (!deleted) return error("삭제할 항목을 찾을 수 없습니다.", 404);
   return NextResponse.json(listPlanner());
 }

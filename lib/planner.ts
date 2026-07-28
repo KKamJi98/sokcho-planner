@@ -8,24 +8,30 @@ export type Place = {
   mapUrl: string;
   notes: string;
   planAt: string;
+  personalRating: number;
   sortOrder: number;
   evaluation: (ReviewMetrics & { evidenceNote: string; verifiedAt: string }) | null;
 };
 
 export type Comment = { id: number; placeId: number | null; author: string; content: string; createdAt: string };
+export type ScheduleItem = { id: number; startAt: string; endAt: string; title: string; transport: string; notes: string; sortOrder: number };
 
 export function listPlanner() {
   const db = getDb();
   const places = db.prepare(`
-    SELECT p.id, p.category, p.name, p.map_url AS mapUrl, p.notes, p.plan_at AS planAt, p.sort_order AS sortOrder,
+    SELECT p.id, p.category, p.name, p.map_url AS mapUrl, p.notes, p.plan_at AS planAt, p.personal_rating AS personalRating, p.sort_order AS sortOrder,
       e.naver_rating AS naverRating, e.naver_reviews AS naverReviews,
       e.google_rating AS googleRating, e.google_reviews AS googleReviews,
       e.kakao_rating AS kakaoRating, e.kakao_reviews AS kakaoReviews,
       e.food, e.service, e.ambience, e.value, e.wait_score AS wait, e.itinerary_fit AS itineraryFit,
       e.evidence_note AS evidenceNote, e.verified_at AS verifiedAt
     FROM places p LEFT JOIN evaluations e ON e.place_id = p.id
-    ORDER BY p.category, p.sort_order, p.id
+    ORDER BY p.category, p.personal_rating DESC, p.sort_order, p.id
   `).all() as Array<Place & ReviewMetrics & { evidenceNote?: string; verifiedAt?: string }>;
+  const scheduleItems = db.prepare(`
+    SELECT id, start_at AS startAt, end_at AS endAt, title, transport, notes, sort_order AS sortOrder
+    FROM schedule_items ORDER BY start_at, sort_order, id
+  `).all() as ScheduleItem[];
   const comments = db.prepare(`
     SELECT id, place_id AS placeId, author, content, created_at AS createdAt
     FROM comments ORDER BY created_at DESC, id DESC
@@ -38,6 +44,7 @@ export function listPlanner() {
       mapUrl: place.mapUrl,
       notes: place.notes,
       planAt: place.planAt,
+      personalRating: place.personalRating,
       sortOrder: place.sortOrder,
       evaluation: place.naverRating == null && place.food == null ? null : {
         naverRating: place.naverRating, naverReviews: place.naverReviews,
@@ -48,23 +55,76 @@ export function listPlanner() {
         evidenceNote: place.evidenceNote ?? "", verifiedAt: place.verifiedAt ?? "",
       },
     })),
+    scheduleItems,
     comments,
   };
 }
 
-export function createPlace(input: Omit<Place, "id" | "sortOrder" | "evaluation">) {
+export function createPlace(input: Omit<Place, "id" | "sortOrder" | "personalRating" | "evaluation">) {
   const db = getDb();
-  const result = db.prepare(`
+  const category = input.category;
+  const name = input.name.trim();
+  const insert = db.prepare(`
     INSERT INTO places (category, name, map_url, notes, plan_at, sort_order)
     VALUES (?, ?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 10 FROM places), 10))
-  `).run(input.category, input.name.trim(), input.mapUrl.trim(), input.notes.trim(), input.planAt);
-  return Number(result.lastInsertRowid);
+  `);
+  const transaction = db.transaction(() => {
+    db.prepare("DELETE FROM deleted_seed_places WHERE category = ? AND name = ?").run(category, name);
+    return insert.run(category, name, input.mapUrl.trim(), input.notes.trim(), input.planAt);
+  });
+  return Number(transaction().lastInsertRowid);
 }
 
 export function updatePlace(id: number, input: Partial<Pick<Place, "notes" | "planAt">>) {
   const db = getDb();
   db.prepare("UPDATE places SET notes = COALESCE(?, notes), plan_at = COALESCE(?, plan_at) WHERE id = ?")
     .run(input.notes ?? null, input.planAt ?? null, id);
+}
+
+export function setPlaceRating(id: number, rating: number) {
+  if (!Number.isInteger(rating) || rating < 0 || rating > 5) return false;
+  const db = getDb();
+  const result = db.prepare("UPDATE places SET personal_rating = ? WHERE id = ?").run(rating, id);
+  return result.changes > 0;
+}
+
+export function deletePlace(id: number) {
+  const db = getDb();
+  const place = db.prepare("SELECT category, name FROM places WHERE id = ?").get(id) as Pick<Place, "category" | "name"> | undefined;
+  if (!place) return false;
+  const transaction = db.transaction(() => {
+    db.prepare("INSERT OR IGNORE INTO deleted_seed_places (category, name) VALUES (?, ?)").run(place.category, place.name);
+    db.prepare("DELETE FROM places WHERE id = ?").run(id);
+  });
+  transaction();
+  return true;
+}
+
+export function createScheduleItem(input: Omit<ScheduleItem, "id" | "sortOrder">) {
+  const db = getDb();
+  const startAt = input.startAt.trim();
+  const title = input.title.trim();
+  const insert = db.prepare(`
+    INSERT INTO schedule_items (start_at, end_at, title, transport, notes, sort_order)
+    VALUES (?, ?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 10 FROM schedule_items), 10))
+  `);
+  const transaction = db.transaction(() => {
+    db.prepare("DELETE FROM deleted_seed_schedule_items WHERE start_at = ? AND title = ?").run(startAt, title);
+    return insert.run(startAt, input.endAt.trim(), title, input.transport.trim(), input.notes.trim());
+  });
+  return Number(transaction().lastInsertRowid);
+}
+
+export function deleteScheduleItem(id: number) {
+  const db = getDb();
+  const item = db.prepare("SELECT start_at AS startAt, title FROM schedule_items WHERE id = ?").get(id) as Pick<ScheduleItem, "startAt" | "title"> | undefined;
+  if (!item) return false;
+  const transaction = db.transaction(() => {
+    db.prepare("INSERT OR IGNORE INTO deleted_seed_schedule_items (start_at, title) VALUES (?, ?)").run(item.startAt, item.title);
+    db.prepare("DELETE FROM schedule_items WHERE id = ?").run(id);
+  });
+  transaction();
+  return true;
 }
 
 export function createComment(input: Pick<Comment, "placeId" | "author" | "content">) {

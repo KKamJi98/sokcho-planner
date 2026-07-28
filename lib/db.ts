@@ -12,6 +12,7 @@ function seed(db: DatabaseInstance) {
     INSERT INTO places (category, name, map_url, notes, plan_at, sort_order)
     SELECT @category, @name, @mapUrl, @notes, @planAt, @sortOrder
     WHERE NOT EXISTS (SELECT 1 FROM places WHERE category = @category AND name = @name)
+      AND NOT EXISTS (SELECT 1 FROM deleted_seed_places WHERE category = @category AND name = @name)
   `);
   const naverSearch = (name: string) => `https://map.naver.com/p/search/${encodeURIComponent(name)}`;
   const rows = [
@@ -98,6 +99,32 @@ function seed(db: DatabaseInstance) {
   ];
   const transaction = db.transaction(() => rows.forEach((row) => insert.run(row)));
   transaction();
+
+  const scheduleInsert = db.prepare(`
+    INSERT INTO schedule_items (start_at, end_at, title, transport, notes, sort_order)
+    SELECT @startAt, @endAt, @title, @transport, @notes, @sortOrder
+    WHERE NOT EXISTS (SELECT 1 FROM schedule_items WHERE start_at = @startAt AND title = @title)
+      AND NOT EXISTS (SELECT 1 FROM deleted_seed_schedule_items WHERE start_at = @startAt AND title = @title)
+  `);
+  const scheduleRows = [
+    {
+      startAt: "2026-08-01T08:50",
+      endAt: "",
+      title: "경부 터미널 → 속초터미널",
+      transport: "고속버스",
+      notes: "08:50 출발. 도착 시각과 승차 위치는 예매 정보로 확인하세요.",
+      sortOrder: 10,
+    },
+    {
+      startAt: "2026-08-01T23:00",
+      endAt: "",
+      title: "속초터미널 → 경부 터미널",
+      transport: "고속버스",
+      notes: "23:00 귀가. 승차 위치와 막차 여부는 출발 전에 다시 확인하세요.",
+      sortOrder: 990,
+    },
+  ];
+  db.transaction(() => scheduleRows.forEach((row) => scheduleInsert.run(row)))();
 }
 
 export function getDb() {
@@ -114,8 +141,29 @@ export function getDb() {
       map_url TEXT NOT NULL,
       notes TEXT NOT NULL DEFAULT '',
       plan_at TEXT NOT NULL DEFAULT '',
+      personal_rating INTEGER NOT NULL DEFAULT 0 CHECK (personal_rating BETWEEN 0 AND 5),
       sort_order INTEGER NOT NULL DEFAULT 100,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS deleted_seed_places (
+      category TEXT NOT NULL,
+      name TEXT NOT NULL,
+      PRIMARY KEY (category, name)
+    );
+    CREATE TABLE IF NOT EXISTS schedule_items (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      start_at TEXT NOT NULL,
+      end_at TEXT NOT NULL DEFAULT '',
+      title TEXT NOT NULL,
+      transport TEXT NOT NULL DEFAULT '',
+      notes TEXT NOT NULL DEFAULT '',
+      sort_order INTEGER NOT NULL DEFAULT 100,
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+    );
+    CREATE TABLE IF NOT EXISTS deleted_seed_schedule_items (
+      start_at TEXT NOT NULL,
+      title TEXT NOT NULL,
+      PRIMARY KEY (start_at, title)
     );
     CREATE TABLE IF NOT EXISTS comments (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -145,6 +193,10 @@ export function getDb() {
       FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
     );
   `);
+  const placeColumns = db.prepare("PRAGMA table_info(places)").all() as Array<{ name: string }>;
+  if (!placeColumns.some((column) => column.name === "personal_rating")) {
+    db.exec("ALTER TABLE places ADD COLUMN personal_rating INTEGER NOT NULL DEFAULT 0");
+  }
   seed(db);
   globalForDb.sokchoPlannerDb = db;
   return db;
