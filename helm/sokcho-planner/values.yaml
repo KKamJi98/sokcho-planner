@@ -1,7 +1,7 @@
 image:
   repository: ghcr.io/kkamji98/sokcho-planner
   # GitHub Actions replaces this immutable tag after it builds a commit.
-  tag: aeee3849f09a6969253378e352b34f4f6169bf33
+  tag: 313481b455caa11b885bcfe2711aaccc9a279525
   pullPolicy: IfNotPresent
 
 replicas: 1
