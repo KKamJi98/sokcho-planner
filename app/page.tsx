@@ -76,16 +76,15 @@ export default function PlannerPage() {
 
       <section id="rubric" className="rubric">
         <p className="eyebrow">REVIEW RUBRIC</p><h2>맛집 비교는 100점으로</h2>
-        <p className="muted">플랫폼 평점 45점 + 실제 방문 품질 55점. 리뷰 수는 점수를 부풀리지 않고 신뢰도만 판단합니다.</p>
+        <p className="muted">서로 다른 지도 2곳 이상에서 최신 근거를 확인한 뒤 비교합니다. 플랫폼마다 평점·리뷰 수 기준이 달라 단순 평균으로 결정하지 않아요.</p>
         <div className="rubric-grid">
-          <div><strong>플랫폼 평점 · 45</strong><span>네이버 40% · Google 35% · 카카오 25%</span></div>
-          <div><strong>음식 · 19.25</strong><span>맛·재료·대표 메뉴 반복 언급</span></div>
-          <div><strong>서비스 · 8.25</strong><span>친절·주문 정확성·응대</span></div>
-          <div><strong>가성비 · 8.25</strong><span>가격·양·재방문 의향</span></div>
-          <div><strong>대기 · 5.5</strong><span>주말 웨이팅·예약 가능성</span></div>
-          <div><strong>동선 · 8.25</strong><span>대관람차·시장·주차와의 적합도</span></div>
+          <div><strong>교차 확인 · 30</strong><span>네이버·Google·카카오 중 확인 플랫폼 수와 평점 일관성</span></div>
+          <div><strong>리뷰 규모 · 15</strong><span>합산 리뷰 수는 신뢰도 보조 지표로만 반영</span></div>
+          <div><strong>최신성 · 15</strong><span>확인일 14일 이내를 우선</span></div>
+          <div><strong>후기 내용 · 25</strong><span>맛·서비스·분위기·가성비와 반복 부정 신호</span></div>
+          <div><strong>방문 가능성 · 15</strong><span>대기·예약·속초아이/시장 동선</span></div>
         </div>
-        <p className="fine">하드 필터: 임시휴무·영업시간·예약/대기·알레르기/메뉴·최근 위생 이슈를 확인한 뒤만 후보로 확정합니다. 각 플랫폼의 확인일·리뷰 수·링크·반복 신호는 근거 메모에 남겨주세요.</p>
+        <p className="fine">추천선은 75점 이상 + 하드 필터 PASS입니다. 영업/브레이크타임, 예약, 최근 반복 위생 이슈, 허용 대기시간, 동선 중 하나라도 불명확하면 HOLD로 두고 출발 전 다시 확인하세요. 입력값에는 플랫폼 링크·리뷰 수·확인일·반복 후기를 근거 메모로 남겨주세요.</p>
       </section>
 
       <section className="global-comments"><h2>💬 여행 메모</h2><CommentForm onSubmit={(body) => submit({ action: "comment", ...body, placeId: null })} />

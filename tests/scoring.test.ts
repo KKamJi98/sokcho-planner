@@ -16,11 +16,13 @@ test("calculates a deterministic weighted score", () => {
     naverReviews: 500,
     googleReviews: 300,
     kakaoReviews: 250,
-  });
-  assert.equal(result.score, 84.3);
+    verifiedAt: "2026-07-28",
+  }, new Date("2026-07-28T12:00:00Z"));
+  assert.equal(result.score, 87.7);
   assert.equal(result.confidence, "높음");
+  assert.equal(result.platformCount, 3);
 });
 
 test("does not invent a score when no metric exists", () => {
-  assert.deepEqual(calculateReviewScore({}), { score: null, confidence: "낮음", reviewCount: 0 });
+  assert.deepEqual(calculateReviewScore({}), { score: null, confidence: "낮음", reviewCount: 0, platformCount: 0 });
 });
