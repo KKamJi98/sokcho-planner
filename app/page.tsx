@@ -1,8 +1,8 @@
 "use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
-import { calculateReviewScore, type ReviewMetrics } from "@/lib/scoring";
 import { submitComment } from "@/lib/comment-submit";
+import { calculateReviewScore, type ReviewMetrics } from "@/lib/scoring";
 
 type Place = {
   id: number;
@@ -11,114 +11,107 @@ type Place = {
   mapUrl: string;
   notes: string;
   planAt: string;
+  planEndAt: string;
   personalRating: number;
   sortOrder: number;
   evaluation: (ReviewMetrics & { evidenceNote: string; verifiedAt: string }) | null;
 };
+type ScheduleItem = { id: number; placeId: number | null; startAt: string; endAt: string; title: string; transport: string; notes: string; sortOrder: number };
 type Comment = { id: number; placeId: number | null; author: string; content: string; createdAt: string };
-type ScheduleItem = { id: number; startAt: string; endAt: string; title: string; transport: string; notes: string; sortOrder: number };
-type Planner = { places: Place[]; comments: Comment[]; scheduleItems: ScheduleItem[] };
+type Planner = { places: Place[]; scheduleItems: ScheduleItem[]; comments: Comment[] };
+type ScheduleDraft = Omit<ScheduleItem, "id" | "placeId" | "sortOrder">;
 
-const mapSearchUrl = (name: string) => `https://map.naver.com/p/search/${encodeURIComponent(name)}`;
-const formatTime = (value: string) => value ? value.replace("T", " · ") : "시간 미정";
+const transportOptions = ["방문", "고속버스", "시내버스", "택시", "도보", "자가용", "기타"];
 
-function naverSearchTerm(value: string) {
-  try {
-    const url = new URL(value);
-    const searchPath = "/p/search/";
-    const index = url.pathname.indexOf(searchPath);
-    if (index >= 0) return decodeURIComponent(url.pathname.slice(index + searchPath.length)).trim();
-    return (url.searchParams.get("query") ?? url.searchParams.get("q") ?? "").trim();
-  } catch {
-    return "";
-  }
-}
-
-export default function PlannerPage() {
+export default function Home() {
   const [planner, setPlanner] = useState<Planner | null>(null);
   const [authenticated, setAuthenticated] = useState<boolean | null>(null);
   const [message, setMessage] = useState("");
   const [showPlaceForm, setShowPlaceForm] = useState(false);
   const [showScheduleForm, setShowScheduleForm] = useState(false);
+  const [editingScheduleId, setEditingScheduleId] = useState<number | null>(null);
 
   const load = async () => {
-    const response = await fetch("/api/planner");
+    const response = await fetch("/api/planner", { cache: "no-store" });
     if (response.status === 401) { setAuthenticated(false); return; }
     const data = await response.json();
-    if (!response.ok) throw new Error(data.error ?? "계획을 불러오지 못했습니다.");
+    if (!response.ok) throw new Error(data.error ?? "플래너를 불러오지 못했습니다.");
     setPlanner(data); setAuthenticated(true);
   };
   useEffect(() => { void load().catch((error: Error) => setMessage(error.message)); }, []);
 
-  const request = async (method: "POST" | "PATCH" | "DELETE", body: object) => {
+  const request = async (method: "POST" | "PATCH" | "DELETE", body: Record<string, unknown>) => {
+    setMessage("");
     const response = await fetch("/api/planner", { method, headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
     const data = await response.json();
-    if (!response.ok) { const error = new Error(data.error ?? "저장하지 못했습니다."); setMessage(error.message); throw error; }
-    setPlanner(data); setMessage("");
+    if (!response.ok) { setMessage(data.error ?? "저장하지 못했습니다."); throw new Error(data.error ?? "저장 실패"); }
+    setPlanner(data);
   };
-  const remove = async (action: "place" | "schedule", id: number) => request("DELETE", { action, id });
+  const remove = async (action: "place" | "schedule", id: number) => { await request("DELETE", { action, id }); };
+
   const groups = useMemo(() => ({
     관광지: planner?.places.filter((place) => place.category === "관광지") ?? [],
     음식점: planner?.places.filter((place) => place.category === "음식점") ?? [],
   }), [planner]);
 
   if (authenticated === false) return <LoginScreen onSuccess={load} />;
-  if (!planner) return <main className="loading">속초 계획을 불러오는 중…</main>;
+  if (!planner || authenticated == null) return <main className="loading">속초 플래너를 불러오는 중…</main>;
 
-  return <main>
+  return <main className="planner-shell">
     <header className="hero">
-      <p className="eyebrow">AUGUST 1 · SOKCHO</p><h1>우리의 속초 당일치기</h1>
-      <p>장소·시간표·채팅·후기 기준을 한 곳에서 맞춰봐요. 별점이 높은 장소부터 정렬됩니다.</p>
-      <div className="hero-actions"><a href="#timetable">타임테이블</a><a href="#places">장소 리스트</a><a href="#chat">우리 채팅</a></div>
+      <p className="eyebrow">SOKCHO · AUG 01</p>
+      <h1>우리의 속초 하루</h1>
+      <p>시간을 정한 장소는 타임테이블에 자동으로 들어가요. 별을 눌러 우선순위도 함께 정해봐요.</p>
+      <nav className="hero-actions" aria-label="빠른 이동"><a href="#timetable">타임테이블</a><a href="#places">가고 싶은 곳</a><a href="#chat">우리 채팅</a></nav>
     </header>
     {message && <p className="message" role="alert">{message}</p>}
 
-    <section id="timetable" className="timetable">
-      <div className="section-head"><div><p className="eyebrow">TIME TABLE</p><h2>오늘의 타임테이블</h2></div><button className="primary" onClick={() => setShowScheduleForm((value) => !value)}>+ 일정 추가</button></div>
-      {showScheduleForm && <ScheduleForm onSubmit={async (body) => { await request("POST", { action: "schedule", ...body }); setShowScheduleForm(false); }} />}
-      <div className="timeline">
-        {planner.scheduleItems.map((item) => <article className="timeline-item" key={item.id}>
-          <div className="timeline-time"><b>{formatTime(item.startAt)}</b><span>{item.endAt ? `~ ${formatTime(item.endAt)}` : "~ 도착 시간 확인"}</span></div>
-          <div className="timeline-card"><div><p className="transport">{item.transport || "일정"}</p><h3>{item.title}</h3>{item.notes && <p>{item.notes}</p>}</div><button className="danger" onClick={() => { if (window.confirm(`“${item.title}” 일정을 제거할까요?`)) void remove("schedule", item.id); }}>제거</button></div>
-        </article>)}
-      </div>
+    <section id="timetable" className="panel timetable-panel">
+      <div className="section-head"><div><p className="eyebrow">TIME TABLE</p><h2>시간표</h2><p className="muted">장소 카드에서 시작·종료 시간을 저장하면 이 표에 자동 반영됩니다.</p></div><button className="button primary" onClick={() => { setShowScheduleForm((value) => !value); setEditingScheduleId(null); }}>＋ 일정 추가</button></div>
+      {showScheduleForm && <div className="form-tray"><ScheduleForm submitLabel="일정 추가" onCancel={() => setShowScheduleForm(false)} onSubmit={async (draft) => { await request("POST", { action: "schedule", ...draft }); setShowScheduleForm(false); }} /></div>}
+      <div className="table-wrap"><table className="timetable-table"><thead><tr><th>시간</th><th>이동 / 일정</th><th>메모</th><th aria-label="작업" /></tr></thead><tbody>
+        {planner.scheduleItems.length === 0 && <tr><td colSpan={4} className="empty-cell">아직 정한 일정이 없어요. 장소에서 시간을 정하거나 일정을 추가해보세요.</td></tr>}
+        {planner.scheduleItems.map((item) => editingScheduleId === item.id ? <tr key={item.id}><td colSpan={4} className="editor-cell"><ScheduleForm initial={item} submitLabel="수정 저장" onCancel={() => setEditingScheduleId(null)} onSubmit={async (draft) => { await request("PATCH", { action: "schedule", id: item.id, ...draft }); setEditingScheduleId(null); }} /></td></tr> : <tr key={item.id}>
+          <td data-label="시간" className="time-cell"><strong>{formatDateTime(item.startAt)}</strong><span>{item.endAt ? `– ${formatTime(item.endAt)}` : "도착 시간 미정"}</span></td>
+          <td data-label="이동 / 일정"><span className="transport-chip">{item.transport || "일정"}</span><strong className="schedule-title">{item.title}</strong>{item.placeId != null && <span className="linked-badge">장소 연동</span>}</td>
+          <td data-label="메모" className="notes-cell">{item.notes || "—"}</td>
+          <td className="action-cell"><button className="icon-button" title="일정 수정" aria-label={`${item.title} 수정`} onClick={() => { setEditingScheduleId(item.id); setShowScheduleForm(false); }}>✎</button><button className="icon-button danger" title="일정 제거" aria-label={`${item.title} 제거`} onClick={() => { if (window.confirm(`“${item.title}” 일정을 제거할까요?`)) void remove("schedule", item.id); }}>×</button></td>
+        </tr>)}
+      </tbody></table></div>
     </section>
 
-    <section id="places" className="places">
-      <div className="section-head"><div><p className="eyebrow">OUR LIST</p><h2>가고 싶은 곳</h2></div><button className="primary" onClick={() => setShowPlaceForm((value) => !value)}>+ 장소 추가</button></div>
-      {showPlaceForm && <PlaceForm onSubmit={async (body) => { await request("POST", { action: "place", ...body }); setShowPlaceForm(false); }} />}
-      <p className="sort-note">★ 우리 별점 높은 순 · 같은 별점이면 기존 일정 순서</p>
-      <div className="grid">{(["관광지", "음식점"] as const).map((category) => <section className="category" key={category}><h2>{category === "관광지" ? "🗺 관광지" : "🍽 음식점"}</h2><div className="cards">{groups[category].map((place) => <PlaceCard key={place.id} place={place} comments={planner.comments.filter((comment) => comment.placeId === place.id)} onComment={(body) => request("POST", { action: "comment", ...body, placeId: place.id })} onPatch={(body) => request("PATCH", { placeId: place.id, ...body })} onDelete={() => remove("place", place.id)} onEvaluation={(metrics) => request("POST", { action: "evaluation", placeId: place.id, metrics })} />)}{groups[category].length === 0 && <p className="empty">아직 없어요. 첫 후보를 추가해보세요.</p>}</div></section>)}</div>
+    <section id="places" className="places-section">
+      <div className="section-head"><div><p className="eyebrow">OUR LIST</p><h2>가고 싶은 곳</h2><p className="muted">별점이 높은 순으로 보여요. 별을 다시 누르면 현재 점수가 바로 보여요.</p></div><button className="button primary" onClick={() => setShowPlaceForm((value) => !value)}>＋ 장소 추가</button></div>
+      {showPlaceForm && <div className="form-tray"><PlaceForm onCancel={() => setShowPlaceForm(false)} onSubmit={async (draft) => { await request("POST", { action: "place", ...draft }); setShowPlaceForm(false); }} /></div>}
+      <div className="place-grid">{(["관광지", "음식점"] as const).map((category) => <section className="place-category" key={category}><div className="category-title"><span>{category === "관광지" ? "🗺" : "🍽"}</span><h3>{category}</h3></div>{groups[category].map((place) => <PlaceCard key={place.id} place={place} comments={planner.comments.filter((comment) => comment.placeId === place.id)} onRate={(rating) => request("PATCH", { placeId: place.id, rating })} onSave={(draft) => request("PATCH", { placeId: place.id, ...draft })} onDelete={() => { if (window.confirm(`“${place.name}”과 연결된 일정·댓글을 제거할까요?`)) void remove("place", place.id); }} onComment={(draft) => request("POST", { action: "comment", placeId: place.id, ...draft })} onEvaluation={(metrics) => request("POST", { action: "evaluation", placeId: place.id, metrics })} />)}</section>)}</div>
     </section>
 
-    <section id="rubric" className="rubric"><p className="eyebrow">REVIEW RUBRIC</p><h2>맛집 비교는 100점으로</h2><p className="muted">서로 다른 지도 2곳 이상에서 최신 근거를 확인합니다. 플랫폼별 평점·리뷰 수 기준이 달라 단순 평균으로 결정하지 않아요.</p><div className="rubric-grid"><div><strong>교차 확인 · 30</strong><span>플랫폼 수와 평점 일관성</span></div><div><strong>리뷰 규모 · 15</strong><span>합산 리뷰 수는 신뢰도 보조</span></div><div><strong>최신성 · 15</strong><span>확인일 14일 이내 우선</span></div><div><strong>후기 내용 · 25</strong><span>맛·서비스·반복 부정 신호</span></div><div><strong>방문 가능성 · 15</strong><span>대기·예약·동선</span></div></div><p className="fine">추천선은 75점 이상 + 영업·대기·예약·위생·동선 PASS입니다.</p></section>
+    <section className="panel rubric"><p className="eyebrow">REVIEW RUBRIC</p><h2>맛집 비교 기준</h2><p>플랫폼별 평점·리뷰 수는 확인 시점과 근거를 함께 남기고, 개인 별점은 우리 취향 우선순위로 사용해요.</p><div className="rubric-list"><span>교차 확인 30</span><span>리뷰 규모 15</span><span>최신성 15</span><span>후기 내용 25</span><span>동선 15</span></div></section>
 
-    <section id="chat" className="global-comments"><div className="section-head"><div><p className="eyebrow">OUR CHAT</p><h2>💬 우리 채팅</h2></div></div><div className="chat-window">{planner.comments.filter((comment) => comment.placeId == null).map((comment) => <CommentView key={comment.id} comment={comment} />)}{planner.comments.filter((comment) => comment.placeId == null).length === 0 && <p className="empty">첫 메시지를 남겨보세요.</p>}</div><CommentForm onSubmit={(body) => request("POST", { action: "comment", ...body, placeId: null })} /></section>
+    <section id="chat" className="panel chat-panel"><div className="section-head"><div><p className="eyebrow">OUR CHAT</p><h2>💬 우리 채팅</h2><p className="muted">이름은 유지하고, 전송한 메시지만 비워집니다.</p></div></div><div className="chat-window">{planner.comments.filter((comment) => comment.placeId == null).map((comment) => <CommentView key={comment.id} comment={comment} />)}{planner.comments.every((comment) => comment.placeId != null) && <p className="empty">첫 메시지를 남겨보세요.</p>}</div><CommentForm onSubmit={(draft) => request("POST", { action: "comment", ...draft })} /></section>
   </main>;
 }
 
-function LoginScreen({ onSuccess }: { onSuccess: () => Promise<void> }) {
-  const [error, setError] = useState(""); const [saving, setSaving] = useState(false);
-  return <main className="login-screen"><form onSubmit={async (event) => { event.preventDefault(); const password = String(new FormData(event.currentTarget).get("password")); setSaving(true); setError(""); try { const response = await fetch("/api/auth", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "로그인 실패"); await onSuccess(); } catch (caught) { setError(caught instanceof Error ? caught.message : "로그인 실패"); } finally { setSaving(false); } }}><p className="eyebrow">PRIVATE TRIP PLAN</p><h1>속초 플래너</h1><input name="password" type="password" required placeholder="공유 비밀번호" autoFocus /><button className="primary" disabled={saving}>{saving ? "확인 중" : "입장하기"}</button>{error && <p className="message">{error}</p>}</form></main>;
-}
+function LoginScreen({ onSuccess }: { onSuccess: () => Promise<void> }) { const [error, setError] = useState(""); const [saving, setSaving] = useState(false); return <main className="login-screen"><form onSubmit={async (event) => { event.preventDefault(); const password = String(new FormData(event.currentTarget).get("password")); setSaving(true); setError(""); try { const response = await fetch("/api/auth", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ password }) }); const data = await response.json(); if (!response.ok) throw new Error(data.error ?? "로그인 실패"); await onSuccess(); } catch (caught) { setError(caught instanceof Error ? caught.message : "로그인 실패"); } finally { setSaving(false); } }}><p className="eyebrow">PRIVATE ITINERARY</p><h1>우리만의 속초 플래너</h1><input name="password" type="password" required autoFocus placeholder="공유 비밀번호" /><button className="button primary" disabled={saving}>{saving ? "확인 중…" : "입장하기"}</button>{error && <p className="message">{error}</p>}</form></main>; }
 
-function PlaceForm({ onSubmit }: { onSubmit: (body: Record<string, string>) => Promise<void> }) {
-  const [saving, setSaving] = useState(false); const [name, setName] = useState(""); const [mapUrl, setMapUrl] = useState("");
-  return <form className="place-form" onSubmit={async (event) => { event.preventDefault(); setSaving(true); try { await onSubmit({ category: String(new FormData(event.currentTarget).get("category")), name, mapUrl: mapUrl || mapSearchUrl(name), notes: String(new FormData(event.currentTarget).get("notes")), planAt: String(new FormData(event.currentTarget).get("planAt")) }); } finally { setSaving(false); } }}><select name="category" defaultValue="음식점"><option>관광지</option><option>음식점</option></select><input required value={name} onChange={(event) => setName(event.target.value)} placeholder="장소명" /><input type="url" value={mapUrl} onChange={(event) => setMapUrl(event.target.value)} onBlur={() => { if (!name.trim()) setName(naverSearchTerm(mapUrl)); }} placeholder="네이버지도 링크 (검색어 자동 입력)" /><input name="planAt" type="datetime-local" /><input name="notes" placeholder="메모·추천 메뉴·예약 정보" /><button className="primary" disabled={saving}>{saving ? "저장 중" : "저장"}</button><p className="form-tip">네이버 지도 검색 링크만 붙여도 장소명이 비어 있으면 검색어를 채웁니다. 지점명·주소는 저장 전 확인하세요.</p></form>;
-}
+function PlaceCard({ place, comments, onRate, onSave, onDelete, onComment, onEvaluation }: { place: Place; comments: Comment[]; onRate: (rating: number) => Promise<void>; onSave: (draft: { notes: string; planAt: string; planEndAt: string }) => Promise<void>; onDelete: () => void; onComment: (draft: { author: string; content: string }) => Promise<void>; onEvaluation: (metrics: Record<string, number | string>) => Promise<void> }) { const [editing, setEditing] = useState(false); const [reviewing, setReviewing] = useState(false); return <article className="place-card"><div className="place-card-top"><div><h4>{place.name}</h4><StarRating value={place.personalRating} onChange={onRate} /></div><div className="card-actions"><a className="icon-button" href={place.mapUrl} target="_blank" rel="noreferrer" title="네이버지도">N</a><button className="icon-button danger" title="장소 제거" onClick={onDelete}>×</button></div></div><div className="map-links"><a href={place.mapUrl} target="_blank" rel="noreferrer">네이버지도</a><a href={googleMap(place.name)} target="_blank" rel="noreferrer">Google</a><a href={kakaoMap(place.name)} target="_blank" rel="noreferrer">카카오</a></div>{place.notes && <p className="place-notes">{place.notes}</p>}<p className={place.planAt ? "scheduled-status active" : "scheduled-status"}>{place.planAt ? `🗓 ${formatDateTime(place.planAt)}${place.planEndAt ? ` – ${formatTime(place.planEndAt)}` : ""} · 타임테이블 연동됨` : "시간을 정하면 타임테이블에 자동 추가돼요."}</p><div className="inline-actions"><button className="button secondary" onClick={() => setEditing((value) => !value)}>{editing ? "접기" : place.planAt ? "시간·메모 수정" : "시간 정하기"}</button><button className="button ghost" onClick={() => setReviewing((value) => !value)}>{reviewing ? "평가 닫기" : "리뷰 평가"}</button></div>{editing && <PlaceScheduleForm place={place} onCancel={() => setEditing(false)} onSave={async (draft) => { await onSave(draft); setEditing(false); }} />}{reviewing && <EvaluationForm place={place} onSave={onEvaluation} />}<div className="place-comments">{comments.map((comment) => <CommentView comment={comment} key={comment.id} />)}<CommentForm compact onSubmit={onComment} /></div></article>; }
 
-function ScheduleForm({ onSubmit }: { onSubmit: (body: Record<string, string>) => Promise<void> }) {
-  const [saving, setSaving] = useState(false);
-  return <form className="schedule-form" onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); setSaving(true); try { await onSubmit({ startAt: String(form.get("startAt")), endAt: String(form.get("endAt")), title: String(form.get("title")), transport: String(form.get("transport")), notes: String(form.get("notes")) }); event.currentTarget.reset(); } finally { setSaving(false); } }}><input name="startAt" type="datetime-local" required defaultValue="2026-08-01T12:00" /><input name="endAt" type="datetime-local" /><input name="title" required placeholder="예: 속초아이 대관람차" /><input name="transport" placeholder="예: 택시 · 도보 · 고속버스" /><input name="notes" placeholder="메모·예약·만나는 곳" /><button className="primary" disabled={saving}>{saving ? "저장 중" : "일정 저장"}</button></form>;
-}
+function StarRating({ value, onChange }: { value: number; onChange: (rating: number) => Promise<void> }) { return <div className="star-rating" aria-label={`우리 별점 ${value}점`}><span className="star-value">{value ? `${value} / 5` : "미평가"}</span><div>{[1, 2, 3, 4, 5].map((star) => <button type="button" key={star} className={star <= value ? "star filled" : "star"} aria-label={`${star}점`} onClick={() => void onChange(star)}>★</button>)}</div>{value > 0 && <button className="rating-reset" type="button" onClick={() => void onChange(0)}>초기화</button>}</div>; }
 
-function PlaceCard({ place, comments, onComment, onPatch, onDelete, onEvaluation }: { place: Place; comments: Comment[]; onComment: (body: { author: string; content: string }) => Promise<void>; onPatch: (body: object) => Promise<void>; onDelete: () => Promise<void>; onEvaluation: (metrics: Record<string, number | string>) => Promise<void> }) {
-  const [editing, setEditing] = useState(false); const [evaluating, setEvaluating] = useState(false); const score = place.evaluation ? calculateReviewScore(place.evaluation) : null;
-  return <article className="card"><div className="card-top"><div><p className="plan-time">{place.planAt ? formatTime(place.planAt) : "시간 미정"}</p><h3>{place.name}</h3></div><a className="map-link" href={place.mapUrl} target="_blank" rel="noreferrer">네이버지도 ↗</a></div><StarRating value={place.personalRating} onChange={(rating) => void onPatch({ rating })} /><p>{place.notes || "메모를 남겨보세요."}</p>{score?.score != null && <p className="score">리뷰 기준 {score.score}점 · {score.confidence}</p>}<div className="card-actions"><button onClick={() => setEditing((value) => !value)}>일정/메모</button><button onClick={() => setEvaluating((value) => !value)}>리뷰 평가</button><button className="danger" onClick={() => { if (window.confirm(`“${place.name}”을(를) 제거할까요?`)) void onDelete(); }}>제거</button></div>{editing && <EditPlace place={place} onSave={async (body) => { await onPatch(body); setEditing(false); }} />}{evaluating && <EvaluationForm place={place} onSave={async (metrics) => { await onEvaluation(metrics); setEvaluating(false); }} />}<div className="place-chat">{comments.map((comment) => <CommentView key={comment.id} comment={comment} />)}<CommentForm compact onSubmit={onComment} /></div></article>;
-}
+function PlaceScheduleForm({ place, onSave, onCancel }: { place: Place; onSave: (draft: { notes: string; planAt: string; planEndAt: string }) => Promise<void>; onCancel: () => void }) { const [saving, setSaving] = useState(false); return <form className="schedule-form place-editor" onSubmit={async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); setSaving(true); try { await onSave({ planAt: String(data.get("planAt")), planEndAt: String(data.get("planEndAt")), notes: String(data.get("notes")) }); } finally { setSaving(false); } }}><label>시작<input name="planAt" type="datetime-local" defaultValue={place.planAt} /></label><label>종료<input name="planEndAt" type="datetime-local" defaultValue={place.planEndAt} /></label><label className="wide">메모<input name="notes" defaultValue={place.notes} placeholder="예: 대기 20분 고려" /></label><p className="form-tip">시간을 비우고 저장하면 이 장소의 자동 타임테이블 항목도 제거됩니다.</p><div className="form-actions"><button className="button secondary" type="button" onClick={onCancel}>취소</button><button className="button primary" disabled={saving}>{saving ? "저장 중…" : "시간표 반영"}</button></div></form>; }
 
-function StarRating({ value, onChange }: { value: number; onChange: (rating: number) => void }) { return <div className="stars" aria-label={`우리 별점 ${value}점`}><span>우리 별점</span>{[1, 2, 3, 4, 5].map((star) => <button type="button" key={star} className={star <= value ? "filled" : ""} onClick={() => onChange(star)} aria-label={`${star}점`}>★</button>)}{value > 0 && <button type="button" className="clear-rating" onClick={() => onChange(0)}>지우기</button>}</div>; }
-function EditPlace({ place, onSave }: { place: Place; onSave: (body: { notes: string; planAt: string }) => Promise<void> }) { return <form className="inline-form" onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); await onSave({ notes: String(form.get("notes")), planAt: String(form.get("planAt")) }); }}><input name="planAt" type="datetime-local" defaultValue={place.planAt} /><input name="notes" defaultValue={place.notes} /><button>반영</button></form>; }
-function CommentForm({ onSubmit, compact = false }: { onSubmit: (body: { author: string; content: string }) => Promise<void>; compact?: boolean }) { const [saving, setSaving] = useState(false); return <form className={compact ? "comment-form compact" : "comment-form"} onSubmit={async (event) => { event.preventDefault(); const formElement = event.currentTarget; const form = new FormData(formElement); setSaving(true); try { await submitComment({ author: String(form.get("author")), content: String(form.get("content")) }, onSubmit, () => formElement.reset()); } finally { setSaving(false); } }}><input name="author" placeholder="이름 (기본: 우리)" /><input name="content" required placeholder={compact ? "장소 메모 남기기" : "같이 정할 내용을 남겨보세요"} /><button disabled={saving}>{saving ? "…" : "보내기"}</button></form>; }
-function CommentView({ comment }: { comment: Comment }) { return <div className="comment"><b>{comment.author}</b><span>{comment.content}</span><time>{new Date(comment.createdAt + "Z").toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}</time></div>; }
-function EvaluationForm({ place, onSave }: { place: Place; onSave: (metrics: Record<string, number | string>) => Promise<void> }) { const values: Record<string, number | string | null | undefined> = place.evaluation ?? {}; const [saving, setSaving] = useState(false); const fields = [["naverRating", "네이버 평점 (0–5)"], ["naverReviews", "네이버 리뷰 수"], ["googleRating", "Google 평점 (0–5)"], ["googleReviews", "Google 리뷰 수"], ["kakaoRating", "카카오 평점 (0–5)"], ["kakaoReviews", "카카오 리뷰 수"], ["food", "음식 (0–100)"], ["service", "서비스 (0–100)"], ["ambience", "분위기 (0–100)"], ["value", "가성비 (0–100)"], ["wait", "대기 (0–100)"], ["itineraryFit", "동선 (0–100)"]] as const; return <form className="evaluation-form" onSubmit={async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); const metrics: Record<string, number | string> = {}; fields.forEach(([key]) => { const value = String(form.get(key)); if (value) metrics[key] = Number(value); }); metrics.evidenceNote = String(form.get("evidenceNote")); metrics.verifiedAt = String(form.get("verifiedAt")); setSaving(true); try { await onSave(metrics); } finally { setSaving(false); } }}><p className="fine">평점·리뷰 수·확인일·후기 근거를 함께 남기세요.</p><div className="metric-grid">{fields.map(([key, label]) => <label key={key}>{label}<input name={key} type="number" min="0" max={key.includes("Rating") ? "5" : undefined} defaultValue={values[key] ?? ""} /></label>)}</div><input name="verifiedAt" type="date" defaultValue={String(values.verifiedAt ?? "")} /><textarea name="evidenceNote" defaultValue={String(values.evidenceNote ?? "")} placeholder="플랫폼 링크·후기 반복 신호·대기/위생/예약 근거" /><button disabled={saving}>{saving ? "저장 중" : "리뷰 평가 저장"}</button></form>; }
+function PlaceForm({ onSubmit, onCancel }: { onSubmit: (draft: { category: "관광지" | "음식점"; name: string; mapUrl: string; notes: string; planAt: string; planEndAt: string }) => Promise<void>; onCancel: () => void }) { const [name, setName] = useState(""); const [mapUrl, setMapUrl] = useState(""); const [saving, setSaving] = useState(false); return <form className="schedule-form place-form" onSubmit={async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); setSaving(true); try { await onSubmit({ category: String(data.get("category")) as "관광지" | "음식점", name, mapUrl, notes: String(data.get("notes")), planAt: String(data.get("planAt")), planEndAt: String(data.get("planEndAt")) }); } finally { setSaving(false); } }}><label>분류<select name="category" defaultValue="관광지"><option>관광지</option><option>음식점</option></select></label><label>장소명<input value={name} required onChange={(event) => setName(event.target.value)} placeholder="장소명 또는 식당명" /></label><label className="wide">네이버지도 링크<input value={mapUrl} required onChange={(event) => setMapUrl(event.target.value)} onBlur={() => { if (!name) setName(naverQuery(mapUrl)); }} placeholder="네이버 지도 검색 링크를 붙여넣으세요" /></label><label>시작 시간 (선택)<input name="planAt" type="datetime-local" /></label><label>종료 시간 (선택)<input name="planEndAt" type="datetime-local" /></label><label className="wide">메모<input name="notes" placeholder="메뉴, 대기, 동선 메모" /></label><p className="form-tip">네이버 검색 링크는 장소명 자동 입력에 사용됩니다. 시간을 설정하면 타임테이블도 자동 생성됩니다.</p><div className="form-actions"><button type="button" className="button secondary" onClick={onCancel}>취소</button><button className="button primary" disabled={saving}>{saving ? "추가 중…" : "장소 추가"}</button></div></form>; }
+
+function ScheduleForm({ initial, onSubmit, onCancel, submitLabel }: { initial?: ScheduleItem; onSubmit: (draft: ScheduleDraft) => Promise<void>; onCancel: () => void; submitLabel: string }) { const [saving, setSaving] = useState(false); return <form className="schedule-form" onSubmit={async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); setSaving(true); try { await onSubmit({ startAt: String(data.get("startAt")), endAt: String(data.get("endAt")), title: String(data.get("title")), transport: String(data.get("transport")), notes: String(data.get("notes")) }); } finally { setSaving(false); } }}><label>시작<input name="startAt" required type="datetime-local" defaultValue={initial?.startAt ?? ""} /></label><label>종료<input name="endAt" type="datetime-local" defaultValue={initial?.endAt ?? ""} /></label><label>일정 / 목적지<input name="title" required defaultValue={initial?.title ?? ""} placeholder="예: 속초터미널 → 아바이마을" /></label><label>이동수단<select name="transport" defaultValue={initial?.transport || "방문"}>{transportOptions.map((option) => <option key={option}>{option}</option>)}</select></label><label className="wide">메모<input name="notes" defaultValue={initial?.notes ?? ""} placeholder="탑승 위치, 예약, 이동 메모" /></label><div className="form-actions"><button type="button" className="button secondary" onClick={onCancel}>취소</button><button className="button primary" disabled={saving}>{saving ? "저장 중…" : submitLabel}</button></div></form>; }
+
+function CommentForm({ onSubmit, compact = false }: { onSubmit: (draft: { author: string; content: string }) => Promise<void>; compact?: boolean }) { const [author, setAuthor] = useState(""); const [content, setContent] = useState(""); const [saving, setSaving] = useState(false); return <form className={compact ? "comment-form compact" : "comment-form"} onSubmit={async (event) => { event.preventDefault(); setSaving(true); try { const cleared = await submitComment({ author, content }, onSubmit); setContent(cleared.content); } finally { setSaving(false); } }}><input value={author} onChange={(event) => setAuthor(event.target.value)} placeholder="이름 (기본: 우리)" /><input value={content} onChange={(event) => setContent(event.target.value)} required placeholder={compact ? "장소 메모 남기기" : "같이 정할 내용을 남겨보세요"} /><button className="button primary" disabled={saving}>{saving ? "…" : "보내기"}</button></form>; }
+
+function CommentView({ comment }: { comment: Comment }) { return <article className="comment"><header><b>{comment.author}</b><time>{new Date(`${comment.createdAt}Z`).toLocaleString("ko-KR", { dateStyle: "short", timeStyle: "short" })}</time></header><p>{comment.content}</p></article>; }
+
+function EvaluationForm({ place, onSave }: { place: Place; onSave: (metrics: Record<string, number | string>) => Promise<void> }) { const values: Record<string, number | string | null | undefined> = place.evaluation ?? {}; const [saving, setSaving] = useState(false); const fields = [["naverRating", "네이버 평점", "5"], ["naverReviews", "네이버 리뷰 수", undefined], ["googleRating", "Google 평점", "5"], ["googleReviews", "Google 리뷰 수", undefined], ["kakaoRating", "카카오 평점", "5"], ["kakaoReviews", "카카오 리뷰 수", undefined], ["food", "음식", "100"], ["service", "서비스", "100"], ["ambience", "분위기", "100"], ["value", "가성비", "100"], ["wait", "대기", "100"], ["itineraryFit", "동선", "100"]] as const; const score = calculateReviewScore(values as ReviewMetrics); return <form className="evaluation-form" onSubmit={async (event) => { event.preventDefault(); const data = new FormData(event.currentTarget); const metrics: Record<string, number | string> = {}; fields.forEach(([key]) => { const value = String(data.get(key)); if (value) metrics[key] = Number(value); }); metrics.evidenceNote = String(data.get("evidenceNote")); metrics.verifiedAt = String(data.get("verifiedAt")); setSaving(true); try { await onSave(metrics); } finally { setSaving(false); } }}><p className="fine">플랫폼 수치와 확인일·근거를 함께 저장하세요. {score.score != null && <strong> 현재 계산 {score.score}점</strong>}</p><div className="metric-grid">{fields.map(([key, label, max]) => <label key={key}>{label}<input name={key} type="number" min="0" max={max} defaultValue={values[key] ?? ""} /></label>)}</div><label>확인일<input name="verifiedAt" type="date" defaultValue={String(values.verifiedAt ?? "")} /></label><label>근거<textarea name="evidenceNote" defaultValue={String(values.evidenceNote ?? "")} placeholder="확인 링크, 대기·영업·위생 신호" /></label><button className="button secondary" disabled={saving}>{saving ? "저장 중…" : "리뷰 평가 저장"}</button></form>; }
+
+function googleMap(name: string) { return `https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(name)}`; }
+function kakaoMap(name: string) { return `https://map.kakao.com/link/search/${encodeURIComponent(name)}`; }
+function naverQuery(url: string) { try { const parsed = new URL(url); const match = parsed.pathname.match(/\/p\/search\/(.+)/); return match ? decodeURIComponent(match[1]) : parsed.searchParams.get("query") ?? ""; } catch { return ""; } }
+function formatDateTime(value: string) { if (!value) return "시간 미정"; return new Date(value).toLocaleString("ko-KR", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false }); }
+function formatTime(value: string) { if (!value) return ""; return new Date(value).toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false }); }

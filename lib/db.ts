@@ -141,6 +141,7 @@ export function getDb() {
       map_url TEXT NOT NULL,
       notes TEXT NOT NULL DEFAULT '',
       plan_at TEXT NOT NULL DEFAULT '',
+      plan_end_at TEXT NOT NULL DEFAULT '',
       personal_rating INTEGER NOT NULL DEFAULT 0 CHECK (personal_rating BETWEEN 0 AND 5),
       sort_order INTEGER NOT NULL DEFAULT 100,
       created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -157,8 +158,10 @@ export function getDb() {
       title TEXT NOT NULL,
       transport TEXT NOT NULL DEFAULT '',
       notes TEXT NOT NULL DEFAULT '',
+      place_id INTEGER,
       sort_order INTEGER NOT NULL DEFAULT 100,
-      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+      FOREIGN KEY (place_id) REFERENCES places(id) ON DELETE CASCADE
     );
     CREATE TABLE IF NOT EXISTS deleted_seed_schedule_items (
       start_at TEXT NOT NULL,
@@ -197,6 +200,14 @@ export function getDb() {
   if (!placeColumns.some((column) => column.name === "personal_rating")) {
     db.exec("ALTER TABLE places ADD COLUMN personal_rating INTEGER NOT NULL DEFAULT 0");
   }
+  if (!placeColumns.some((column) => column.name === "plan_end_at")) {
+    db.exec("ALTER TABLE places ADD COLUMN plan_end_at TEXT NOT NULL DEFAULT ''");
+  }
+  const scheduleColumns = db.prepare("PRAGMA table_info(schedule_items)").all() as Array<{ name: string }>;
+  if (!scheduleColumns.some((column) => column.name === "place_id")) {
+    db.exec("ALTER TABLE schedule_items ADD COLUMN place_id INTEGER");
+  }
+  db.exec("CREATE UNIQUE INDEX IF NOT EXISTS schedule_items_place_id_unique ON schedule_items(place_id) WHERE place_id IS NOT NULL");
   seed(db);
   globalForDb.sokchoPlannerDb = db;
   return db;

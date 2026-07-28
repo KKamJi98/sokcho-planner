@@ -35,7 +35,7 @@ test("records removal of a seeded candidate so it is not seeded again", async ()
 });
 
 test("adds and removes a timetable item", async () => {
-  const { createScheduleItem, deleteScheduleItem, listPlanner } = await import("../lib/planner");
+  const { createScheduleItem, deleteScheduleItem, listPlanner, updateScheduleItem } = await import("../lib/planner");
   const itemId = createScheduleItem({
     startAt: "2026-08-01T08:50",
     endAt: "2026-08-01T11:20",
@@ -44,6 +44,8 @@ test("adds and removes a timetable item", async () => {
     notes: "출발 터미널 확인",
   });
   assert.ok(listPlanner().scheduleItems.some((item) => item.id === itemId && item.title === "속초행 버스"));
+  assert.equal(updateScheduleItem(itemId, { title: "수정한 속초행 버스", startAt: "2026-08-01T09:00" }), true);
+  assert.ok(listPlanner().scheduleItems.some((item) => item.id === itemId && item.title === "수정한 속초행 버스" && item.startAt === "2026-08-01T09:00"));
   assert.equal(deleteScheduleItem(itemId), true);
   assert.equal(listPlanner().scheduleItems.some((item) => item.id === itemId), false);
 });
@@ -54,4 +56,29 @@ test("stores a personal star rating on a place", async () => {
   assert.ok(place);
   assert.equal(setPlaceRating(place.id, 4), true);
   assert.equal(listPlanner().places.find((item) => item.id === place.id)?.personalRating, 4);
+});
+
+test("syncs a timed place to one linked timetable row", async () => {
+  const { createPlace, listPlanner, updatePlace } = await import("../lib/planner");
+  const placeId = createPlace({
+    category: "관광지",
+    name: "시간 연동 테스트 장소",
+    mapUrl: "https://map.naver.com/p/search/%EC%8B%9C%EA%B0%84",
+    notes: "테스트",
+    planAt: "2026-08-01T13:00",
+    planEndAt: "2026-08-01T14:30",
+  });
+
+  let item = listPlanner().scheduleItems.find((schedule) => schedule.placeId === placeId);
+  assert.ok(item);
+  assert.equal(item.startAt, "2026-08-01T13:00");
+  assert.equal(item.endAt, "2026-08-01T14:30");
+
+  updatePlace(placeId, { planAt: "2026-08-01T15:00", planEndAt: "2026-08-01T16:00" });
+  item = listPlanner().scheduleItems.find((schedule) => schedule.placeId === placeId);
+  assert.equal(item?.startAt, "2026-08-01T15:00");
+  assert.equal(listPlanner().scheduleItems.filter((schedule) => schedule.placeId === placeId).length, 1);
+
+  updatePlace(placeId, { planAt: "", planEndAt: "" });
+  assert.equal(listPlanner().scheduleItems.some((schedule) => schedule.placeId === placeId), false);
 });

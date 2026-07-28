@@ -6,8 +6,7 @@ export type CommentDraft = {
 export async function submitComment(
   draft: CommentDraft,
   save: (draft: CommentDraft) => Promise<void>,
-  reset: () => void,
-) {
+): Promise<CommentDraft> {
   await save(draft);
-  reset();
+  return { ...draft, content: "" };
 }

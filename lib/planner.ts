@@ -8,18 +8,19 @@ export type Place = {
   mapUrl: string;
   notes: string;
   planAt: string;
+  planEndAt: string;
   personalRating: number;
   sortOrder: number;
   evaluation: (ReviewMetrics & { evidenceNote: string; verifiedAt: string }) | null;
 };
 
 export type Comment = { id: number; placeId: number | null; author: string; content: string; createdAt: string };
-export type ScheduleItem = { id: number; startAt: string; endAt: string; title: string; transport: string; notes: string; sortOrder: number };
+export type ScheduleItem = { id: number; placeId: number | null; startAt: string; endAt: string; title: string; transport: string; notes: string; sortOrder: number };
 
 export function listPlanner() {
   const db = getDb();
   const places = db.prepare(`
-    SELECT p.id, p.category, p.name, p.map_url AS mapUrl, p.notes, p.plan_at AS planAt, p.personal_rating AS personalRating, p.sort_order AS sortOrder,
+    SELECT p.id, p.category, p.name, p.map_url AS mapUrl, p.notes, p.plan_at AS planAt, p.plan_end_at AS planEndAt, p.personal_rating AS personalRating, p.sort_order AS sortOrder,
       e.naver_rating AS naverRating, e.naver_reviews AS naverReviews,
       e.google_rating AS googleRating, e.google_reviews AS googleReviews,
       e.kakao_rating AS kakaoRating, e.kakao_reviews AS kakaoReviews,
@@ -29,7 +30,7 @@ export function listPlanner() {
     ORDER BY p.category, p.personal_rating DESC, p.sort_order, p.id
   `).all() as Array<Place & ReviewMetrics & { evidenceNote?: string; verifiedAt?: string }>;
   const scheduleItems = db.prepare(`
-    SELECT id, start_at AS startAt, end_at AS endAt, title, transport, notes, sort_order AS sortOrder
+    SELECT id, place_id AS placeId, start_at AS startAt, end_at AS endAt, title, transport, notes, sort_order AS sortOrder
     FROM schedule_items ORDER BY start_at, sort_order, id
   `).all() as ScheduleItem[];
   const comments = db.prepare(`
@@ -44,6 +45,7 @@ export function listPlanner() {
       mapUrl: place.mapUrl,
       notes: place.notes,
       planAt: place.planAt,
+      planEndAt: place.planEndAt,
       personalRating: place.personalRating,
       sortOrder: place.sortOrder,
       evaluation: place.naverRating == null && place.food == null ? null : {
@@ -60,25 +62,62 @@ export function listPlanner() {
   };
 }
 
-export function createPlace(input: Omit<Place, "id" | "sortOrder" | "personalRating" | "evaluation">) {
+function syncPlaceSchedule(placeId: number) {
+  const db = getDb();
+  const place = db.prepare(`
+    SELECT id, name, notes, plan_at AS planAt, plan_end_at AS planEndAt, sort_order AS sortOrder
+    FROM places WHERE id = ?
+  `).get(placeId) as { id: number; name: string; notes: string; planAt: string; planEndAt: string; sortOrder: number } | undefined;
+  if (!place) return;
+
+  if (!place.planAt) {
+    db.prepare("DELETE FROM schedule_items WHERE place_id = ?").run(placeId);
+    return;
+  }
+
+  const linked = db.prepare("SELECT id FROM schedule_items WHERE place_id = ?").get(placeId) as { id: number } | undefined;
+  if (linked) {
+    db.prepare(`
+      UPDATE schedule_items
+      SET start_at = ?, end_at = ?, title = ?, transport = '방문', notes = ?, sort_order = ?
+      WHERE id = ?
+    `).run(place.planAt, place.planEndAt, place.name, place.notes, place.sortOrder, linked.id);
+  } else {
+    db.prepare(`
+      INSERT INTO schedule_items (place_id, start_at, end_at, title, transport, notes, sort_order)
+      VALUES (?, ?, ?, ?, '방문', ?, ?)
+    `).run(place.id, place.planAt, place.planEndAt, place.name, place.notes, place.sortOrder);
+  }
+}
+
+export function createPlace(input: Omit<Place, "id" | "sortOrder" | "personalRating" | "evaluation" | "planEndAt"> & { planEndAt?: string }) {
   const db = getDb();
   const category = input.category;
   const name = input.name.trim();
   const insert = db.prepare(`
-    INSERT INTO places (category, name, map_url, notes, plan_at, sort_order)
-    VALUES (?, ?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 10 FROM places), 10))
+    INSERT INTO places (category, name, map_url, notes, plan_at, plan_end_at, sort_order)
+    VALUES (?, ?, ?, ?, ?, ?, COALESCE((SELECT MAX(sort_order) + 10 FROM places), 10))
   `);
   const transaction = db.transaction(() => {
     db.prepare("DELETE FROM deleted_seed_places WHERE category = ? AND name = ?").run(category, name);
-    return insert.run(category, name, input.mapUrl.trim(), input.notes.trim(), input.planAt);
+    const result = insert.run(category, name, input.mapUrl.trim(), input.notes.trim(), input.planAt, input.planEndAt ?? "");
+    const id = Number(result.lastInsertRowid);
+    syncPlaceSchedule(id);
+    return id;
   });
-  return Number(transaction().lastInsertRowid);
+  return transaction();
 }
 
-export function updatePlace(id: number, input: Partial<Pick<Place, "notes" | "planAt">>) {
+export function updatePlace(id: number, input: Partial<Pick<Place, "notes" | "planAt" | "planEndAt">>) {
   const db = getDb();
-  db.prepare("UPDATE places SET notes = COALESCE(?, notes), plan_at = COALESCE(?, plan_at) WHERE id = ?")
-    .run(input.notes ?? null, input.planAt ?? null, id);
+  db.transaction(() => {
+    db.prepare(`
+      UPDATE places
+      SET notes = COALESCE(?, notes), plan_at = COALESCE(?, plan_at), plan_end_at = COALESCE(?, plan_end_at)
+      WHERE id = ?
+    `).run(input.notes ?? null, input.planAt ?? null, input.planEndAt ?? null, id);
+    syncPlaceSchedule(id);
+  })();
 }
 
 export function setPlaceRating(id: number, rating: number) {
@@ -94,13 +133,14 @@ export function deletePlace(id: number) {
   if (!place) return false;
   const transaction = db.transaction(() => {
     db.prepare("INSERT OR IGNORE INTO deleted_seed_places (category, name) VALUES (?, ?)").run(place.category, place.name);
+    db.prepare("DELETE FROM schedule_items WHERE place_id = ?").run(id);
     db.prepare("DELETE FROM places WHERE id = ?").run(id);
   });
   transaction();
   return true;
 }
 
-export function createScheduleItem(input: Omit<ScheduleItem, "id" | "sortOrder">) {
+export function createScheduleItem(input: Omit<ScheduleItem, "id" | "sortOrder" | "placeId">) {
   const db = getDb();
   const startAt = input.startAt.trim();
   const title = input.title.trim();
@@ -113,6 +153,17 @@ export function createScheduleItem(input: Omit<ScheduleItem, "id" | "sortOrder">
     return insert.run(startAt, input.endAt.trim(), title, input.transport.trim(), input.notes.trim());
   });
   return Number(transaction().lastInsertRowid);
+}
+
+export function updateScheduleItem(id: number, input: Partial<Pick<ScheduleItem, "startAt" | "endAt" | "title" | "transport" | "notes">>) {
+  const db = getDb();
+  const result = db.prepare(`
+    UPDATE schedule_items
+    SET start_at = COALESCE(?, start_at), end_at = COALESCE(?, end_at), title = COALESCE(?, title),
+        transport = COALESCE(?, transport), notes = COALESCE(?, notes)
+    WHERE id = ?
+  `).run(input.startAt ?? null, input.endAt ?? null, input.title?.trim() || null, input.transport ?? null, input.notes ?? null, id);
+  return result.changes > 0;
 }
 
 export function deleteScheduleItem(id: number) {

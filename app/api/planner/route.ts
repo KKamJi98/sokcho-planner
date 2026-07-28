@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAuthenticated } from "@/lib/auth";
-import { createComment, createPlace, createScheduleItem, deletePlace, deleteScheduleItem, listPlanner, saveEvaluation, setPlaceRating, updatePlace } from "@/lib/planner";
+import { createComment, createPlace, createScheduleItem, deletePlace, deleteScheduleItem, listPlanner, saveEvaluation, setPlaceRating, updatePlace, updateScheduleItem } from "@/lib/planner";
 
 export const runtime = "nodejs";
 
@@ -21,7 +21,7 @@ export async function POST(request: NextRequest) {
       return error("카테고리, 장소명, 네이버지도 링크는 필수입니다.");
     }
     if (!body.name.trim() || !body.mapUrl.trim()) return error("장소명과 네이버지도 링크를 입력해주세요.");
-    createPlace({ category: body.category, name: body.name, mapUrl: body.mapUrl, notes: typeof body.notes === "string" ? body.notes : "", planAt: typeof body.planAt === "string" ? body.planAt : "" });
+    createPlace({ category: body.category, name: body.name, mapUrl: body.mapUrl, notes: typeof body.notes === "string" ? body.notes : "", planAt: typeof body.planAt === "string" ? body.planAt : "", planEndAt: typeof body.planEndAt === "string" ? body.planEndAt : "" });
   } else if (body.action === "comment") {
     if (typeof body.content !== "string" || !body.content.trim()) return error("댓글 내용을 입력해주세요.");
     createComment({ placeId: typeof body.placeId === "number" ? body.placeId : null, author: typeof body.author === "string" ? body.author : "우리", content: body.content });
@@ -48,11 +48,28 @@ export async function POST(request: NextRequest) {
 export async function PATCH(request: NextRequest) {
   if (!(await isAuthenticated())) return error("로그인이 필요합니다.", 401);
   const body = await request.json() as Record<string, unknown>;
-  if (typeof body.placeId !== "number") return error("장소를 찾을 수 없습니다.");
-  if (body.rating !== undefined) {
-    if (typeof body.rating !== "number" || !setPlaceRating(body.placeId, body.rating)) return error("별점은 0~5 사이 정수여야 합니다.");
+  if (body.action === "schedule") {
+    if (typeof body.id !== "number" || typeof body.startAt !== "string" || typeof body.title !== "string" || !body.startAt.trim() || !body.title.trim()) {
+      return error("수정할 일정의 시작 시각과 제목은 필수입니다.");
+    }
+    if (!updateScheduleItem(body.id, {
+      startAt: body.startAt,
+      endAt: typeof body.endAt === "string" ? body.endAt : "",
+      title: body.title,
+      transport: typeof body.transport === "string" ? body.transport : "",
+      notes: typeof body.notes === "string" ? body.notes : "",
+    })) return error("수정할 일정을 찾을 수 없습니다.", 404);
   } else {
-    updatePlace(body.placeId, { notes: typeof body.notes === "string" ? body.notes : undefined, planAt: typeof body.planAt === "string" ? body.planAt : undefined });
+    if (typeof body.placeId !== "number") return error("장소를 찾을 수 없습니다.");
+    if (body.rating !== undefined) {
+      if (typeof body.rating !== "number" || !setPlaceRating(body.placeId, body.rating)) return error("별점은 0~5 사이 정수여야 합니다.");
+    } else {
+      updatePlace(body.placeId, {
+        notes: typeof body.notes === "string" ? body.notes : undefined,
+        planAt: typeof body.planAt === "string" ? body.planAt : undefined,
+        planEndAt: typeof body.planEndAt === "string" ? body.planEndAt : undefined,
+      });
+    }
   }
   return NextResponse.json(listPlanner());
 }
