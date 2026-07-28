@@ -59,7 +59,7 @@ test("stores a personal star rating on a place", async () => {
 });
 
 test("syncs a timed place to one linked timetable row", async () => {
-  const { createPlace, listPlanner, updatePlace } = await import("../lib/planner");
+  const { createPlace, deleteScheduleItem, listPlanner, updatePlace } = await import("../lib/planner");
   const placeId = createPlace({
     category: "관광지",
     name: "시간 연동 테스트 장소",
@@ -79,6 +79,8 @@ test("syncs a timed place to one linked timetable row", async () => {
   assert.equal(item?.startAt, "2026-08-01T15:00");
   assert.equal(listPlanner().scheduleItems.filter((schedule) => schedule.placeId === placeId).length, 1);
 
-  updatePlace(placeId, { planAt: "", planEndAt: "" });
+  assert.ok(item);
+  assert.equal(deleteScheduleItem(item.id), true);
   assert.equal(listPlanner().scheduleItems.some((schedule) => schedule.placeId === placeId), false);
+  assert.equal(listPlanner().places.find((place) => place.id === placeId)?.planAt, "");
 });

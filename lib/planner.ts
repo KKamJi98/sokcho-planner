@@ -168,10 +168,14 @@ export function updateScheduleItem(id: number, input: Partial<Pick<ScheduleItem,
 
 export function deleteScheduleItem(id: number) {
   const db = getDb();
-  const item = db.prepare("SELECT start_at AS startAt, title FROM schedule_items WHERE id = ?").get(id) as Pick<ScheduleItem, "startAt" | "title"> | undefined;
+  const item = db.prepare("SELECT place_id AS placeId, start_at AS startAt, title FROM schedule_items WHERE id = ?").get(id) as Pick<ScheduleItem, "placeId" | "startAt" | "title"> | undefined;
   if (!item) return false;
   const transaction = db.transaction(() => {
-    db.prepare("INSERT OR IGNORE INTO deleted_seed_schedule_items (start_at, title) VALUES (?, ?)").run(item.startAt, item.title);
+    if (item.placeId != null) {
+      db.prepare("UPDATE places SET plan_at = '', plan_end_at = '' WHERE id = ?").run(item.placeId);
+    } else {
+      db.prepare("INSERT OR IGNORE INTO deleted_seed_schedule_items (start_at, title) VALUES (?, ?)").run(item.startAt, item.title);
+    }
     db.prepare("DELETE FROM schedule_items WHERE id = ?").run(id);
   });
   transaction();
