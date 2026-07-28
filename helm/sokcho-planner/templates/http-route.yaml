@@ -21,4 +21,5 @@ spec:
           kind: Service
           name: {{ include "sokcho-planner.fullname" . }}
           port: {{ .Values.service.port }}
+          weight: 1
 {{- end }}
