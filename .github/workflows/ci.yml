@@ -47,7 +47,7 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/sokcho-planner:${{ github.sha }}
+          tags: ghcr.io/kkamji98/sokcho-planner:${{ github.sha }}
       - name: Pin the GitOps chart to the published immutable image
         run: |
           python - <<'PY'
