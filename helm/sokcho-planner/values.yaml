@@ -18,7 +18,7 @@ persistence:
 
 appEnv:
   secretName: sokcho-planner-app-env
-  refreshInterval: 1h
+  refreshInterval: 6h
   secretStoreRef:
     name: parameter-store
     kind: ClusterSecretStore
